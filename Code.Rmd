@@ -1,0 +1,154 @@
+## The code for GBM model of house price (medv) using the BostonHousing data
+
+Load the libraries and the BostonHousing data.
+
+```{r}
+library(caret)
+library(gbm)
+library(tidyverse)
+library(mlbench)
+
+data(BostonHousing)
+head(BostonHousing)
+```
+```{r}
+r = data.frame(summary(BostonHousing))
+write.csv(BostonHousing,"1.csv")
+```
+
+Split the data into training and testing (validation) subsets using the createDataPartition function;
+
+```{r}
+set.seed(1234) # set the seed
+
+train.index = createDataPartition(BostonHousing$medv,p=0.7,list=F)
+data.train = BostonHousing[train.index,]
+data.test = BostonHousing[-train.index,]
+```
+The distributions of the target variable are similar across the 2 splits:
+
+```{r}
+summary(data.train$medv)
+summary(data.test$medv)
+```
+
+Rescale the training and validation subsets, and keep the target variable in its original form.
+
+```{r}
+data.train.z =
+data.train %>% select(-medv)  %>%
+mutate_if(is_logical,as.character)  %>%
+mutate_if(is_double,scale)  %>%   data.frame()
+data.test.z  =
+data.test  %>% select(-medv)  %>%
+mutate_if(is_logical,as.character)  %>%
+mutate_if(is_double,scale)  %>%   data.frame()
+#  add unscaled  y variable  back
+data.train.z$medv = data.train$medv
+data.test.z$medv = data.test$medv
+```
+
+GBM model
+
+```{r}
+modelLookup("gbm")
+```
+A tuning grid can be set for these, and evaluation metric defined:
+```{r}
+caretGrid  <-  expand.grid(interaction.depth=c(3,5,7,10),  n.trees= (0:50)*50,
+shrinkage=c(0.01 ,0.001),
+n.minobsinnode=20)
+metric  <-"RMSE"
+
+trainControl<- trainControl (method="cv" , number=5)
+```
+Then the model can be run over the grid, setting a seed for reproducibility:
+
+```{r}
+set.seed(99)
+gbm.caret  <-  train(medv ~.,data=data.train.z,  distribution="gaussian" , method="gbm" ,
+trControl=trainControl, verbose=FALSE ,
+tuneGrid=caretGrid, metric=metric)
+```
+
+explore  the  results
+```{r}
+print (gbm.caret)
+ggplot(gbm.caret)
+```
+```{r}
+names (gbm.caret)
+```
+```{r}
+# see  best  tune
+gbm.caret[6]
+```
+
+```{r}
+# see  grid  results
+head(data.frame(gbm.caret[4]))
+dim(caretGrid)
+dim(data.frame(gbm.caret[4]))
+```
+Find  the  best parameter  COmbinatiOn
+```{r}
+#put  into  a  data.frame
+grid_df = data.frame(gbm.caret[4])
+grid_df[which.min(grid_df$results.RMSE),]
+```
+```{r}
+# assign  to  params  ana  inspect
+params  =  grid_df[which.min(grid_df$results.RMSE),  1:4]
+params
+```
+These can be used in the final model:
+```{r}
+##  Create  final  mOdel
+# because  parameters  are  known,  model  can  be  fit  without  parameter  tuning
+fitControl  <-  trainControl (method  = "none" ,  classProbs=FALSE)
+# extract the values  from  params
+gbmFit  <-  train(medv~ .,  data=data.train.z,  distribution="gaussian" , method= "gbm", trControl  =  fitControl,verbose = FALSE ,
+##  Only  a  single  model  is  passed  to  the
+tuneGrid  =  data.frame(interaction.depth = 10 ,
+n.trees =  2500 ,
+shrinkage =  0.01 ,
+n.minobsinnode =  20),
+metric = metric)
+
+##  Prediction  and  model  evaluation
+# generate  predictions
+pred= predict(gbmFit, newdata  =data.test.z)
+# plot  these  against  observed
+data.frame(Predicted  =  pred,  Observed  =  data.test.z$medv)  %>%
+ggplot(aes(x =Observed, y = Predicted))+  geom_point (size =1,  alpha = 0.5)+geom_smooth(method ="lm")
+```
+
+```{r}
+# generate  some  prediction  accuracy  measures
+postResample (pred= pred,  obs=data.test.z$medv)
+
+# examine  variable  importance
+varImp(gbmFit, scale  =  FALSE)
+
+```
+compare with the OLS:
+```{r}
+##  Create  final  mOdel
+# because  parameters  are  known,  model  can  be  fit  without  parameter  tuning
+fitControl  <-  trainControl (method  = "none" ,  classProbs=FALSE)
+# extract the values  from  params
+OLSFit  <-  train(medv~ .,  data=data.train.z,  distribution="gaussian" , method= "lm", trControl  =  fitControl,verbose = FALSE ,
+metric = metric)
+
+##  Prediction  and  model  evaluation
+# generate  predictions
+pred_OLS= predict(OLSFit, newdata  =data.test.z)
+postResample (pred= pred_OLS,  obs=data.test.z$medv)
+```
+
+```{r}
+# plot  these  against  observed
+data.frame(Predicted  =  pred_OLS,  Observed  =  data.test.z$medv)  %>%
+ggplot(aes(x =Observed, y = Predicted))+  geom_point (size =1,  alpha = 0.5)+geom_smooth(method ="lm")
+```
+
